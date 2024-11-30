@@ -1,15 +1,7 @@
 .venv
-backup
-etc-dnsmasq.d
-etc-pihole
-
 .env
-docker-compose.override.yml
-result
-output
 .direnv
 .DS_Store
-sd-image.*
 
 .idea/
 .vs/

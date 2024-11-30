@@ -18,5 +18,6 @@
       dd if=${pkgs.ubootLibreTechCC}/u-boot.gxl.sd.bin of=$img conv=fsync,notrunc bs=512 seek=1 skip=1
     '';
   };
+
   system.copySystemConfiguration = true;
 }
