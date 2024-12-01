@@ -1,69 +1,75 @@
 {
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    flake-utils.url = "github:numtide/flake-utils";
-    flake-compat = {
-      url = "github:edolstra/flake-compat";
-      flake = false;
+    nixpkgs.url = "nixpkgs/nixos-unstable";
+    home-manager = {
+      url = "github:nix-community/home-manager/master";
+      inputs.nixpkgs.follows = "nixpkgs";
     };
-    devshell.url = "github:numtide/devshell";
   };
 
-  outputs = { self, nixpkgs, flake-utils, devshell, ... }:
-    flake-utils.lib.eachDefaultSystem (system: {
-      apps.devshell = self.outputs.devShell.${system}.flakeApp;
-      formatter = nixpkgs.legacyPackages.${system}.nixpkgs-fmt;
-      packages = {
-        nixosConfigurations =
-          let
-            inherit (nixpkgs.lib) nixosSystem;
-          in
-          rec {
-             # to build: nix build github:lucernae/nix-config#nixosConfigurations.raspberry-pi_3.config.system.build.sdImage
-            raspberry-pi_3 = nixosSystem {
-              system = "aarch64-linux";
-              modules = [
-                "${nixpkgs}/nixos/modules/installer/sd-card/sd-image-aarch64-installer.nix"
-                # replace this with your target configuration
-                ./configuration.nix
+  outputs = inputs:
+  let
+    lib = import ./lib { inherit inputs; };
+    inherit (lib) forAllSystems mapHomes mkSystem;
 
-                # extra config for sdImage generator
-                {
-                  sdImage.compressImage = false;
-                }
-              ];
-            };
-            raspberry-pi_3_default = nixosSystem {
-              system = "aarch64-linux";
-              modules = [
-                "${nixpkgs}/nixos/modules/installer/sd-card/sd-image-aarch64-installer.nix"
-                # replace this with your target configuration
-                ./configuration.default.nix
+    overlay = final: _prev: import ./pkgs { pkgs = final; };
 
-                # extra config for sdImage generator
-                {
-                  sdImage.compressImage = false;
-                }
+    legacyPackages = forAllSystems (system:
+      import inputs.nixpkgs {
+        inherit system;
+        config.allowUnfree = true;
+        overlays = [ overlay ];
+      }
+    );
+  in
+  {
+    inherit legacyPackages;
+
+    nixosConfigurations = let
+      system = "x86_64-linux";
+      pkgs = legacyPackages.${system};
+    in
+    {
+      boson = mkSystem { hostname = "boson"; users = [ "jamiez" ]; inherit pkgs; };
+      neutrino = mkSystem { hostname = "neutrino"; users = [ "jamiez" ]; inherit pkgs; };
+    };
+
+    homeConfigurations = mapHomes;
+
+    devShells = forAllSystems (system:
+      import ./shells { pkgs = legacyPackages.${system}; }
+    );
+
+    packages = forAllSystems (system:
+      import ./pkgs { pkgs = legacyPackages.${system}; }
+    );
+
+    images.lepotato = let
+      nixosConf = inputs.nixpkgs.lib.nixosSystem {
+        modules = [
+          (
+            { config, lib, pkgs, ... }: {
+              imports = [
+                "${inputs.nixpkgs}/nixos/modules/installer/sd-card/sd-image-aarch64-installer.nix"
               ];
-            };
-          };
+              sdImage = {
+                compressImage = false;
+                populateFirmwareCommands = "";
+                postBuildCommands = ''
+                  dd if=${pkgs.ubootLibreTechCC}/u-boot.gxl.sd.bin of=$img conv=fsync,notrunc bs=512 seek=1 skip=1
+                  dd if=${pkgs.ubootLibreTechCC}/u-boot.gxl.sd.bin of=$img conv=fsync,notrunc bs=1 count=444
+                '';
+              };
+              nixpkgs = {
+                config.allowUnfree = true;
+                localSystem.system = "x86_64-linux";
+                crossSystem.system = "aarch64-linux";
+              };
+              system.stateVersion = "22.05";
+            }
+          )
+        ];
       };
-      devShell =
-        let
-          pkgs = import nixpkgs {
-            inherit system;
-            overlays = [ devshell.overlays.default ];
-          };
-        in
-        pkgs.devshell.mkShell {
-          name = "nixos-pi";
-          commands = [
-          ];
-          packages = with pkgs; [
-            git
-            qemu
-            qemu_kvm
-          ];
-        };
-    });
+    in nixosConf.config.system.build.sdImage;
+  };
 }
